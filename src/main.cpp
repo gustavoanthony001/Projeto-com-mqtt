@@ -1,16 +1,25 @@
-//=======================================================
-// Projeto: MQTT Duplas
-// Descrição: Controle RGB via MQTT e JSON
-// Autores: Gustavo Anthony e Eduardo do Carmo
-// Data: 04/11/2026
-// Versão: 1.0
-//=======================================================
+/*
+===================================================================
+ATIVIDADE: Desafio de Projeto IoT - Comunicação entre ESP32
+Data de Inicio: 04/11/26
+Dupla: Gustavo Anthony & Eduardo do Carmo
+===================================================================
+*/
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <LiquidCrystal_I2C.h>
+#include <Botao.h>
 
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+Botao btnVermelho(7);
+Botao btnVerde(5);
+Botao btnAzul(6);
+
+#define PINO_RGB 48
 
 void aoReceberMsg(char* topico, byte* payLoad, unsigned int tamanho);
 void tratarJson(String mensagem);
@@ -18,205 +27,215 @@ void controlarRGB(String cor);
 void publicarStatus(String cor, String estado);
 void conectarMQTT();
 
-const char* SSID = "SENAI EDUCACIONAL";
+const char* SSID  = "SENAI EDUCACIONAL";
 const char* SENHA = "info@134";
 
 const char* BROKER = "broker.emqx.io";
-const int PORTA = 1883;
+const int   PORTA  = 1883;
 
-const char* TOPICO_SUB =
-"senai134/esp32/eduardoEgustavo/comando";
-
-const char* TOPICO_PUB =
-"senai134/esp32/eduardoEgustavo/status";
-
-#define PINO_RGB 48
+const char* TOPICO_SUB = "senai134/esp32/eduardoEgustavo/comando";
+const char* TOPICO_PUB = "senai134/esp32/eduardoEgustavo/status";
 
 String corAtual = "DESLIGADO";
+String idDispositivo;
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 
 void setup()
 {
-    Serial.begin(115200);
-    Serial.print("");
+  btnVermelho.iniciar();
+  btnVerde.iniciar();
+  btnAzul.iniciar();
 
-    Serial.printf("Conectando a rede %s ", SSID);
-    WiFi.begin(SSID, SENHA);
+  Serial.begin(115200);
 
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.print("#");
-        delay(500);
-    }
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(3, 0);
+  lcd.print("LED DESLIGADO");
 
-    delay(1000);
+  rgbLedWrite(PINO_RGB, 0, 0, 0);
 
-    Serial.printf("\n\rConectado a rede %s com sucesso!\n\r", SSID);
-    Serial.printf("Conectado ao Broker %s\n\r", BROKER);
+  Serial.printf("Conectando a rede %s ", SSID);
+  WiFi.begin(SSID, SENHA);
 
-    mqtt.setServer(BROKER, PORTA);
-    mqtt.setCallback(aoReceberMsg);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print("#");
+    delay(500);
+  }
 
-    mqtt.setBufferSize(256);
+  Serial.printf("\n\rConectado a rede %s com sucesso!\n\r", SSID);
 
-    String id = "esp32-" +
-                String((uint32_t)ESP.getEfuseMac(), HEX);
+  mqtt.setServer(BROKER, PORTA);
+  mqtt.setCallback(aoReceberMsg);
+  mqtt.setBufferSize(256);
 
-    Serial.printf("ID do dispositivo: %s\n\r", id.c_str());
+  idDispositivo = "esp32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+  Serial.printf("ID do dispositivo: %s\n\r", idDispositivo.c_str());
 
-    bool conectadoBroker;
-    conectadoBroker = mqtt.connect(id.c_str());
-
-    if (conectadoBroker)
-    {
-        Serial.printf("Conectado ao Broker %s com sucesso!\n", BROKER);
-        mqtt.subscribe(TOPICO_SUB);
-
-        Serial.printf("Inscrito no tópico: %s\n\r", TOPICO_SUB);
-    }
-    else
-    {
-        Serial.printf("Falha ao conectar ao Broker %s\n\r", BROKER);
-        Serial.printf("Falha: ");
-        Serial.println(mqtt.state());
-    }
-
-    rgbLedWrite(PINO_RGB, 0, 0, 0);
+  conectarMQTT();
 }
 
 void loop()
 {
-    mqtt.loop();
+  if (!mqtt.connected())
+  {
+    Serial.println("Reconectando ao MQTT...");
+    conectarMQTT();
+  }
+  mqtt.loop();
 
-    if (!mqtt.connected())
-    {
-        Serial.println("Reconectando ao MQTT...");
-        conectarMQTT();
-    }
-}
+  btnAzul.atualizar();
+  btnVerde.atualizar();
+  btnVermelho.atualizar();
 
-void aoReceberMsg(char* topico, byte* payLoad, unsigned int tamanho)
-{
-    String mensagem;
-    mensagem.reserve(tamanho);
+  if (btnAzul.pressionou())
+  {
+    Serial.println("BOTAO AZUL CLICADO");
+    controlarRGB("AZUL");
+  }
 
-    for (unsigned int i = 0; i < tamanho; i++)
-    {
-        mensagem += (char)payLoad[i];
-    }
+  if (btnVerde.pressionou())
+  {
+    Serial.println("BOTAO VERDE CLICADO");
+    controlarRGB("VERDE");
+  }
 
-    Serial.printf("Mensagem recebida no tópico: %s\n", topico);
-    Serial.printf("Mensagem: %s\n", mensagem.c_str());
-
-    tratarJson(mensagem);
-}
-
-
-void tratarJson(String mensagem)
-{
-    JsonDocument doc;
-
-    DeserializationError erro = deserializeJson(doc, mensagem);
-
-    if (erro)
-    {
-        Serial.println("Erro no JSON!");
-        return;
-    }
-
-    if (!doc["cor"].is<const char*>())
-    {
-        Serial.println("Campo cor inválido!");
-        return;
-    }
-
-    String cor = doc["cor"].as<String>();
-
-    controlarRGB(cor);
+  if (btnVermelho.pressionou())
+  {
+    Serial.println("BOTAO VERMELHO CLICADO");
+    controlarRGB("VERMELHO");
+  }
 }
 
 void controlarRGB(String cor)
 {
-    cor.toUpperCase();
+  cor.toUpperCase();
+  cor.trim();
 
-    if (cor == "VERMELHO")
-    {
-        rgbLedWrite(PINO_RGB, 255, 0, 0);
-        corAtual = "VERMELHO";
-        Serial.println("LED VERMELHO LIGADO");
-    }
-    else if (cor == "AZUL")
-    {
-        rgbLedWrite(PINO_RGB, 0, 0, 255);
-        corAtual = "AZUL";
-        Serial.println("LED AZUL LIGADO");
-    }
-    else if (cor == "VERDE")
-    {
-        rgbLedWrite(PINO_RGB, 0, 255, 0);
-        corAtual = "VERDE";
-        Serial.println("LED VERDE LIGADO");
-    }
-    else if (cor == "OFF")
-    {
-        rgbLedWrite(PINO_RGB, 0, 0, 0);
-        corAtual = "DESLIGADO";
-        Serial.println("LED DESLIGADO");
-    }
-    else
-    {
-        Serial.println("Cor invalida!");
-        publicarStatus(cor, "ERRO");
-        return;
-    }
+  lcd.clear();
 
-    publicarStatus(corAtual, "LIGADO");
+  if (cor == "VERMELHO")
+  {
+    rgbLedWrite(PINO_RGB, 255, 0, 0);
+    lcd.setCursor(4, 0);  lcd.print("LED LIGADO");
+    lcd.setCursor(0, 2);  lcd.print("COR VERMELHA LIGADA");
+    corAtual = "VERMELHO";
+  }
+  else if (cor == "VERDE")
+  {
+    rgbLedWrite(PINO_RGB, 0, 255, 0);
+    lcd.setCursor(4, 0);  lcd.print("LED LIGADO");
+    lcd.setCursor(0, 2);  lcd.print("COR VERDE LIGADA");
+    corAtual = "VERDE";
+  }
+  else if (cor == "AZUL")
+  {
+    rgbLedWrite(PINO_RGB, 0, 0, 255);
+    lcd.setCursor(4, 0);  lcd.print("LED LIGADO");
+    lcd.setCursor(0, 2);  lcd.print("COR AZUL LIGADA");
+    corAtual = "AZUL";
+  }
+  else if (cor == "DESLIGADO" || cor == "OFF")
+  {
+    rgbLedWrite(PINO_RGB, 0, 0, 0);
+    lcd.setCursor(3, 0);  lcd.print("LED DESLIGADO");
+    corAtual = "DESLIGADO";
+  }
+  else
+  {
+    Serial.printf("Cor desconhecida: %s\n\r", cor.c_str());
+    lcd.setCursor(0, 0);  lcd.print("COR INVALIDA");
+    return;
+  }
+
+  publicarStatus(corAtual, corAtual == "DESLIGADO" ? "desligado" : "ligado");
 }
 
 void publicarStatus(String cor, String estado)
 {
-    JsonDocument doc;
+  JsonDocument doc;
+  doc["cor"]    = cor;
+  doc["estado"] = estado;
 
-    doc["dispositivo"] = "ESP32_RGB";
-    doc["cor"] = cor;
-    doc["estado"] = estado;
+  char buffer[128];
+  serializeJson(doc, buffer);
 
-    String mensagem;
+  mqtt.publish(TOPICO_PUB, buffer);
+  Serial.printf("Status publicado: %s\n\r", buffer);
+}
 
-    serializeJson(doc, mensagem);
+void tratarJson(String mensagem)
+{
+  mensagem.trim();
+  Serial.printf("Payload bruto: [%s]\n\r", mensagem.c_str());
 
-    if (mqtt.publish(TOPICO_PUB, mensagem.c_str()))
-    {
-        Serial.println("Status publicado:");
-        Serial.println(mensagem);
-    }
-    else
-    {
-        Serial.println("Erro ao publicar status!");
-    }
+  JsonDocument doc;
+  DeserializationError erro = deserializeJson(doc, mensagem);
+
+  if (erro)
+  {
+    Serial.printf("Nao e JSON valido (%s), usando texto puro\n\r", erro.c_str());
+    controlarRGB(mensagem);
+    return;
+  }
+
+  JsonVariant valor = doc["cor"];
+  if (valor.isNull()) valor = doc["color"];
+  if (valor.isNull()) valor = doc["led"];
+
+  if (valor.isNull())
+  {
+    Serial.println("JSON sem o campo 'cor'");
+    return;
+  }
+
+  String cor = valor.as<String>();
+  cor.trim();
+  cor.toUpperCase();
+
+  if (cor == "VERMELHA" || cor == "RED")        cor = "VERMELHO";
+  else if (cor == "GREEN")                      cor = "VERDE";
+  else if (cor == "BLUE")                       cor = "AZUL";
+  else if (cor == "APAGADO" || cor == "OFF")    cor = "DESLIGADO";
+
+  Serial.printf("Cor interpretada: %s\n\r", cor.c_str());
+  controlarRGB(cor);
+}
+
+// Callback: chamado quando chega mensagem no tópico inscrito
+// ---------------------------------------------------------------
+void aoReceberMsg(char* topico, byte* payLoad, unsigned int tamanho)
+{
+  String mensagem;
+  for (unsigned int i = 0; i < tamanho; i++)
+  {
+    mensagem += (char)payLoad[i];
+  }
+
+  Serial.printf("Mensagem recebida [%s]: %s\n\r", topico, mensagem.c_str());
+  tratarJson(mensagem);
 }
 
 void conectarMQTT()
 {
-    while (!mqtt.connected())
+  while (!mqtt.connected())
+  {
+    Serial.printf("Conectando ao Broker %s...\n\r", BROKER);
+
+    if (mqtt.connect(idDispositivo.c_str()))
     {
-        String id = "esp32-" +
-                    String((uint32_t)ESP.getEfuseMac(), HEX);
-
-        if (mqtt.connect(id.c_str()))
-        {
-            Serial.println("Reconectado ao Broker!");
-
-            mqtt.subscribe(TOPICO_SUB);
-        }
-        else
-        {
-            Serial.print("Falha MQTT: ");
-            Serial.println(mqtt.state());
-
-            delay(1000);
-        }
+      Serial.println("Conectado ao Broker com sucesso!");
+      mqtt.subscribe(TOPICO_SUB);
+      Serial.printf("Inscrito no topico: %s\n\r", TOPICO_SUB);
+      publicarStatus(corAtual, "online");
     }
+    else
+    {
+      Serial.printf("Falha, rc=%d. Nova tentativa em 3s\n\r", mqtt.state());
+      delay(3000);
+    }
+  }
 }
