@@ -15,9 +15,10 @@ Dupla: Gustavo Anthony & Eduardo do Carmo
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-Botao btnVermelho(7);
-Botao btnVerde(5);
+Botao btnVermelho(15);
+Botao btnVerde(7);
 Botao btnAzul(6);
+Botao btnDesligar(5);
 
 #define PINO_RGB 48
 
@@ -47,6 +48,7 @@ void setup()
   btnVermelho.iniciar();
   btnVerde.iniciar();
   btnAzul.iniciar();
+  btnDesligar.iniciar();
 
   Serial.begin(115200);
 
@@ -90,6 +92,7 @@ void loop()
   btnAzul.atualizar();
   btnVerde.atualizar();
   btnVermelho.atualizar();
+  btnDesligar.atualizar();
 
   if (btnAzul.pressionou())
   {
@@ -107,6 +110,12 @@ void loop()
   {
     Serial.println("BOTAO VERMELHO CLICADO");
     controlarRGB("VERMELHO");
+  }
+
+  if (btnDesligar.pressionou())
+  {
+    Serial.println("BOTAO DESLIGAR CLICADO");
+    controlarRGB("DESLIGADO");
   }
 }
 
@@ -205,8 +214,6 @@ void tratarJson(String mensagem)
   controlarRGB(cor);
 }
 
-// Callback: chamado quando chega mensagem no tópico inscrito
-// ---------------------------------------------------------------
 void aoReceberMsg(char* topico, byte* payLoad, unsigned int tamanho)
 {
   String mensagem;
